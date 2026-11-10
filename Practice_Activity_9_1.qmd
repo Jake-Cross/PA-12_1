@@ -1,0 +1,223 @@
+
+---
+title: "Practice Activity 9.1: Classification Models"
+author: "Jake Cross"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: false
+execute:
+  warning: false
+jupyter: python3
+---
+
+
+
+At this link, you will find a dataset containing information about heart disease patients: https://www.dropbox.com/scl/fi/0vrpdnq5asmeulc4gd50y/ha_1.csv?rlkey=ciisalceotl77ffqhqe3kujzv&dl=1
+
+A description of the original dataset can be found here: https://archive.ics.uci.edu/dataset/45/heart+disease (However, this dataset has been cleaned and reduced, and the people have been given fictious names.)
+
+
+## 1. Logistic Regression
+
+Fit a Logistic Regression using only `age` and `chol` (cholesterol) as predictors.
+
+For a 55 year old, how high would their cholesterol need to be for the doctors to predict heart disease is present?
+
+How high for the doctors to estimate a 90% chance that heart disease is present?
+
+```{python}
+
+import pandas as pd
+import numpy as np
+
+url = "https://www.dropbox.com/scl/fi/0vrpdnq5asmeulc4gd50y/ha_1.csv?rlkey=ciisalceotl77ffqhqe3kujzv&dl=1"
+
+df = pd.read_csv(url)
+
+display(df.head())
+
+print("Shape:", df.shape)
+print("Columns:", df.columns.tolist())
+
+df.info()
+
+print("Missing Values:")
+display(df.isna().sum())
+```
+
+```{python}
+
+print("Diagnosis Categories:")
+display(df["diagnosis"].value_counts())
+
+print("Age and Cholesterol Summary:")
+display(df[["age", "chol"]].describe())
+
+assert df[["age", "chol", "diagnosis"]].notna().all().all()
+```
+
+```{python}
+
+from sklearn.linear_model import LogisticRegression
+import numpy as np
+
+X = df[["age", "chol"]]
+y = df["diagnosis"]
+
+logistic_model = LogisticRegression(max_iter=1000)
+logistic_model.fit(X, y)
+
+print("Classes:", logistic_model.classes_)
+print("Intercept:", logistic_model.intercept_[0])
+print("Coefficients:", logistic_model.coef_[0])
+
+negative_labels = {"no", "absent", "negative", "healthy", "false", "0"}
+
+present_label = next(
+    label for label in logistic_model.classes_
+    if str(label).strip().lower() not in negative_labels
+    and not str(label).strip().lower().startswith(("no ", "not "))
+    and "absent" not in str(label).lower()
+)
+
+sign = 1 if logistic_model.classes_[1] == present_label else -1
+
+b0 = sign * logistic_model.intercept_[0]
+b_age = sign * logistic_model.coef_[0][0]
+b_chol = sign * logistic_model.coef_[0][1]
+
+chol_50 = -(b0 + b_age * 55) / b_chol
+chol_90 = (np.log(0.9 / 0.1) - b0 - b_age * 55) / b_chol
+
+print("Cholesterol at 50% probability:", round(chol_50, 2))
+print("Cholesterol at 90% probability:", round(chol_90, 2))
+```
+
+## 2. Linear Discriminant Analysis
+
+Fit an LDA model using only `age` and `chol` (cholesterol)  as predictors.
+
+For a 55 year old, how high would their cholesterol need to be for the doctors to predict heart disease is present?
+
+```{python}
+
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+lda_model = LinearDiscriminantAnalysis()
+lda_model.fit(X, y)
+
+print("Classes:", lda_model.classes_)
+print("Intercept:", lda_model.intercept_[0])
+print("Coefficients:", lda_model.coef_[0])
+
+lda_sign = 1 if lda_model.classes_[1] == "Disease" else -1
+
+lda_b0 = lda_sign * lda_model.intercept_[0]
+lda_b_age = lda_sign * lda_model.coef_[0][0]
+lda_b_chol = lda_sign * lda_model.coef_[0][1]
+
+lda_chol_50 = -(lda_b0 + lda_b_age * 55) / lda_b_chol
+
+print("Cholesterol at 50% probability:", round(lda_chol_50, 2))
+```
+
+## 3. Support Vector Classifier
+
+Fit an SVC model using only `age` and `chol` as predictors.  Don't forget to tune the regularization parameter.
+
+For a 55 year old, how high would their cholesterol need to be for the doctors to predict heart disease is present?
+
+```{python}
+
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+
+svc_pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("svc", SVC(kernel="linear"))
+])
+
+svc_grid = GridSearchCV(
+    svc_pipeline,
+    {"svc__C": [0.001, 0.01, 0.1, 1, 10, 100]},
+    cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+    scoring="accuracy"
+)
+
+svc_grid.fit(X, y)
+
+svc_model = svc_grid.best_estimator_
+
+scaler = svc_model.named_steps["scaler"]
+svc = svc_model.named_steps["svc"]
+
+coefficients = svc.coef_[0] / scaler.scale_
+intercept = svc.intercept_[0] - np.sum(
+    svc.coef_[0] * scaler.mean_ / scaler.scale_
+)
+
+sign = 1 if svc.classes_[1] == "Disease" else -1
+
+svc_chol_50 = -(intercept + coefficients[0] * 55) / coefficients[1]
+
+print("Best C:", svc_grid.best_params_["svc__C"])
+print("Cross-Validation Accuracy:", svc_grid.best_score_)
+print("Classes:", svc.classes_)
+print("Coefficients:", coefficients)
+print("Intercept:", intercept)
+print("Cholesterol Decision Boundary at Age 55:", round(svc_chol_50, 2))
+```
+
+## 4. Comparing Decision Boundaries
+
+Make a scatterplot of `age` and `chol`, coloring the points by their true disease outcome.  Add a line to the plot representing the **linear separator** (aka **decision boundary**) for each of the three models above.
+
+```{python}
+
+import matplotlib.pyplot as plt
+
+ages = np.linspace(df["age"].min(), df["age"].max(), 200)
+
+logistic_boundary = -(
+    logistic_model.intercept_[0] + logistic_model.coef_[0][0] * ages
+) / logistic_model.coef_[0][1]
+
+lda_boundary = -(
+    lda_model.intercept_[0] + lda_model.coef_[0][0] * ages
+) / lda_model.coef_[0][1]
+
+svc_boundary = -(
+    intercept + coefficients[0] * ages
+) / coefficients[1]
+
+plt.figure(figsize=(10, 7))
+
+for diagnosis, color in [("Disease", "red"), ("No Disease", "blue")]:
+    subset = df[df["diagnosis"] == diagnosis]
+    plt.scatter(
+        subset["age"],
+        subset["chol"],
+        color=color,
+        alpha=0.5,
+        label=diagnosis
+    )
+
+plt.plot(ages, logistic_boundary, color="green", label="Logistic Regression")
+plt.plot(ages, lda_boundary, color="orange", linestyle="--", label="LDA")
+plt.plot(ages, svc_boundary, color="purple", linestyle=":", linewidth=2, label="SVC")
+
+plt.xlabel("Age")
+plt.ylabel("Cholesterol (mg/dL)")
+plt.title("Decision Boundaries: Logistic Regression, LDA, and SVC")
+plt.xlim(df["age"].min(), df["age"].max())
+plt.ylim(df["chol"].min(), df["chol"].max())
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
